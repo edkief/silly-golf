@@ -1,0 +1,14 @@
+{
+  "name": "silly-golf-3d",
+  "version": "0.1.0",
+  "description": "3D mini golf, WebGL client, authoritative room server, solo + online multiplayer",
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

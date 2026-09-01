@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mini Golf 3D</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="start" class="panel">
+  <h1>Mini Golf 3D</h1>
+  <input id="name" placeholder="Your name" maxlength="16">
+  <button id="solo">Play Solo</button>
+  <div class="sep">or online</div>
+  <input id="room" placeholder="Room code (blank = create)" maxlength="8">
+  <button id="join">Join / Create Room</button>
+  <p class="hint">Hold left mouse to charge, release to putt. Right-drag orbits, wheel zooms.</p>
+</div>
+
+<div id="hud" class="hidden">
+  <div id="hole"></div>
+  <div id="invite"></div>
+  <div id="board"></div>
+  <div id="status"></div>
+  <div id="power" style="opacity:0"><div id="powerbar"></div></div>
+</div>
+
+<div id="end" class="panel hidden">
+  <h1>Round Complete</h1>
+  <div id="endboard"></div>
+  <button id="again">Play Again</button>
+</div>
+
+<div id="msg" class="hidden"></div>
+
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>
