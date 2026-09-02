@@ -1,0 +1,10 @@
+node_modules
+.git
+.opencode
+test
+rooms.json
+rooms.json.tmp
+*.md
+Dockerfile
+build.sh
+.dockerignore

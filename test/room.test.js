@@ -119,3 +119,43 @@ test('max players enforced', () => {
   room.addPlayer('B');
   assert.equal(room.addPlayer('C'), null);
 });
+
+test('serialize/fromJSON round-trips room state', () => {
+  const room = new Room(oneLevel);
+  room.addPlayer('A');
+  room.addPlayer('B');
+  room.input('p1', { t: 'shoot', dir: [0, 1], power: powerFor(7) });
+  run(room, 600); // A holes, turn -> B
+  const restored = Room.fromJSON(JSON.parse(JSON.stringify(room.serialize())));
+  assert.equal(restored.holeIndex, room.holeIndex);
+  assert.equal(restored.phase, room.phase);
+  assert.equal(restored.n, room.n);
+  assert.equal(restored.players.length, 2);
+  assert.deepEqual(restored.players[0].scores, room.players[0].scores);
+  assert.equal(restored.players[0].holed, true);
+  assert.ok(restored.players.every((p) => p.offline));
+  assert.equal(restored.snapshot().turn, room.snapshot().turn);
+});
+
+test('restored room skips offline players for the turn', () => {
+  const room = new Room(oneLevel);
+  room.addPlayer('A');
+  room.addPlayer('B');
+  const restored = Room.fromJSON(room.serialize());
+  const live = restored.addPlayer('C');
+  restored.syncTurn();
+  assert.equal(restored.snapshot().turn, live);
+  // live player can shoot even though turn was on a ghost
+  restored.input(live, { t: 'shoot', dir: [0, 1], power: 0.5 });
+  assert.equal(restored.snapshot().phase, 'moving');
+});
+
+test('restored room keeps stepping with no live players', () => {
+  const room = new Room(oneLevel);
+  room.addPlayer('A');
+  room.addPlayer('B');
+  const restored = Room.fromJSON(room.serialize());
+  run(restored, 120); // step() calls syncTurn; nothing crashes, no live players
+  assert.equal(restored.players.length, 2);
+  assert.equal(restored.phase, 'aim');
+});

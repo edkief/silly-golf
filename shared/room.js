@@ -48,8 +48,10 @@ export class Room {
     this.players.splice(i, 1);
     if (this.players.length === 0) return;
     this.turnIdx %= this.players.length;
-    // if it was that player's turn while idle, hand turn to current index
-    if (this.phase === 'aim' && this.players[this.turnIdx] && this.players[this.turnIdx].holed) {
+    // if it was that player's turn while idle (or the turn sits on a
+    // restored offline player), hand turn to the next playable index
+    const cur = this.players[this.turnIdx];
+    if (this.phase === 'aim' && cur && (cur.holed || cur.offline)) {
       this.advanceTurn();
     }
   }
@@ -92,6 +94,7 @@ export class Room {
 
   step(dt) {
     if (this.players.length === 0) return;
+    if (this.phase === 'aim') this.syncTurn();
     if (this.phase === 'moving') {
       let anyHoled = false;
       for (const p of this.players) {
@@ -122,8 +125,62 @@ export class Room {
     if (this.players.length === 0) return;
     for (let i = 1; i <= this.players.length; i++) {
       const idx = (this.turnIdx + i) % this.players.length;
-      if (!this.players[idx].holed) { this.turnIdx = idx; return; }
+      const p = this.players[idx];
+      if (!p.holed && !p.offline) { this.turnIdx = idx; return; }
     }
+  }
+
+  // move the turn off a holed or offline (restored) player
+  syncTurn() {
+    if (this.phase !== 'aim' || this.players.length === 0) return;
+    const cur = this.players[this.turnIdx];
+    if (cur && (cur.holed || cur.offline)) this.advanceTurn();
+  }
+
+  serialize() {
+    return {
+      n: this.n,
+      holeIndex: this.holeIndex,
+      turnIdx: this.turnIdx,
+      phase: this.phase,
+      pauseTimer: this.pauseTimer,
+      players: this.players.map((p) => ({
+        id: p.id,
+        name: p.name,
+        color: p.color,
+        ball: { ...p.ball },
+        strokes: p.strokes,
+        scores: [...p.scores],
+        holed: p.holed,
+        offline: Boolean(p.offline),
+      })),
+    };
+  }
+
+  static fromJSON(data) {
+    const room = new Room();
+    room.n = Number(data.n) || 0;
+    room.holeIndex = Number(data.holeIndex) || 0;
+    room.turnIdx = Number(data.turnIdx) || 0;
+    room.phase = String(data.phase || 'aim');
+    room.pauseTimer = Number(data.pauseTimer) || 0;
+    room.players = (Array.isArray(data.players) ? data.players : []).map((p, i) => ({
+      id: String(p.id || 'p' + i),
+      name: String(p.name || 'Golfer').slice(0, 16),
+      color: String(p.color || COLORS[i % COLORS.length]),
+      ball: {
+        x: Number(p.ball && p.ball.x) || 0,
+        z: Number(p.ball && p.ball.z) || 0,
+        vx: Number(p.ball && p.ball.vx) || 0,
+        vz: Number(p.ball && p.ball.vz) || 0,
+      },
+      strokes: Number(p.strokes) || 0,
+      scores: Array.isArray(p.scores) ? p.scores.map(Number) : [],
+      holed: Boolean(p.holed),
+      // restored players have no socket; turn logic skips them
+      offline: true,
+    }));
+    return room;
   }
 
   nextHole() {

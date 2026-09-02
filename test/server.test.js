@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import WebSocket from 'ws';
 import { startServer } from '../server/index.js';
 
@@ -100,5 +103,44 @@ test('shoot over the wire updates state; wrong-room code rejected', async () => 
   } finally {
     for (const c of clients) c.terminate();
     await s.stop();
+  }
+});
+
+test('rooms persist across restart when DATA_FILE is set', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'golf-'));
+  const file = path.join(dir, 'rooms.json');
+  process.env.DATA_FILE = file;
+  const clients = [];
+  let s = null;
+  const stop = async (srv) => { if (srv) { s = null; await srv.stop(); } };
+  try {
+    s = await startServer(0);
+    const c1 = new WebSocket(`ws://127.0.0.1:${s.port}/ws`);
+    clients.push(c1);
+    await new Promise((r) => c1.on('open', r));
+    c1.send(JSON.stringify({ t: 'join', name: 'Alice' }));
+    const w1 = await waitFor(c1, (m) => m.t === 'welcome');
+    const roomCode = w1.room;
+    c1.terminate();
+    await stop(s); // flushes rooms.json
+
+    s = await startServer(0);
+    const c2 = new WebSocket(`ws://127.0.0.1:${s.port}/ws`);
+    clients.push(c2);
+    await new Promise((r) => c2.on('open', r));
+    c2.send(JSON.stringify({ t: 'join', name: 'Bob', room: roomCode }));
+    const w2 = await waitFor(c2, (m) => m.t === 'welcome');
+    assert.equal(w2.room, roomCode);
+    // restored offline Alice + live Bob
+    const st = await waitFor(c2, (m) => m.t === 'state' && m.s.players.length === 2);
+    assert.ok(st.s.players.some((p) => p.name === 'Alice'));
+    assert.ok(st.s.players.some((p) => p.name === 'Bob'));
+    c2.terminate();
+    await stop(s);
+  } finally {
+    delete process.env.DATA_FILE;
+    for (const c of clients) c.terminate();
+    await stop(s);
+    rmSync(dir, { recursive: true, force: true });
   }
 });

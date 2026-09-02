@@ -1,2 +1,4 @@
 node_modules/
 .opencode
+rooms.json
+rooms.json.tmp

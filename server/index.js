@@ -1,7 +1,7 @@
 // HTTP static server + authoritative WebSocket room server.
 
 import http from 'node:http';
-import { createReadStream } from 'node:fs';
+import { createReadStream, readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -56,10 +56,51 @@ function makeRoomCode(rooms) {
   return 'ROOM' + Date.now().toString(36).toUpperCase();
 }
 
+function loadRooms(file) {
+  const rooms = new Map();
+  if (!file) return rooms;
+  try {
+    const data = JSON.parse(readFileSync(file, 'utf8'));
+    for (const [code, e] of Object.entries(data.rooms ?? {})) {
+      if (e && e.room) rooms.set(String(code), { room: Room.fromJSON(e.room), clients: new Map() });
+    }
+  } catch { /* no file or corrupt -> start fresh */ }
+  return rooms;
+}
+
 export function startServer(port = Number(process.env.PORT || 3000)) {
-  const rooms = new Map(); // code -> { room, clients: Map(playerId -> ws) }
+  const DATA_FILE = process.env.DATA_FILE || '';
+  // with persistence, empty rooms survive so players can rejoin by code
+  const keepEmpty = Boolean(DATA_FILE);
+  const rooms = loadRooms(DATA_FILE); // code -> { room, clients: Map(playerId -> ws) }
   const server = http.createServer(serveStatic);
   const wss = new WebSocketServer({ server, path: '/ws' });
+
+  let saveTimer = null;
+  let dirty = false;
+  const flushRooms = () => new Promise((resolve) => {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    if (!dirty) return resolve();
+    dirty = false;
+    try {
+      mkdirSync(path.dirname(DATA_FILE), { recursive: true });
+      const payload = JSON.stringify({
+        rooms: Object.fromEntries([...rooms].map(([c, e]) => [c, { room: e.room.serialize() }])),
+      });
+      const tmp = DATA_FILE + '.tmp';
+      writeFileSync(tmp, payload);
+      renameSync(tmp, DATA_FILE); // atomic replace
+    } catch (err) { console.error('room persist failed:', err.message); }
+    resolve();
+  });
+  const markDirty = () => {
+    if (!DATA_FILE) return;
+    dirty = true;
+    if (!saveTimer) {
+      saveTimer = setTimeout(flushRooms, 500);
+      saveTimer.unref?.();
+    }
+  };
 
   function broadcast(entry, str) {
     for (const ws of entry.clients.values()) {
@@ -88,6 +129,7 @@ export function startServer(port = Number(process.env.PORT || 3000)) {
           code = makeRoomCode(rooms);
           entry = { room: new Room(), clients: new Map() };
           rooms.set(code, entry);
+          markDirty();
         }
         playerId = entry.room.addPlayer(msg.name);
         if (!playerId) {
@@ -99,9 +141,11 @@ export function startServer(port = Number(process.env.PORT || 3000)) {
         ws.__room = code;
         ws.send(JSON.stringify({ t: 'welcome', id: playerId, room: code }));
         broadcast(entry, JSON.stringify({ t: 'state', s: entry.room.snapshot() }));
+        markDirty();
         return;
       }
       entry.room.input(playerId, msg);
+      markDirty();
     });
 
     const cleanup = () => {
@@ -109,8 +153,9 @@ export function startServer(port = Number(process.env.PORT || 3000)) {
       entry.room.removePlayer(playerId);
       entry.clients.delete(playerId);
       const rc = rooms.get(ws.__room);
-      if (rc && rc.clients.size === 0) rooms.delete(ws.__room);
+      if (rc && rc.clients.size === 0 && !keepEmpty) rooms.delete(ws.__room);
       else if (rc) broadcast(rc, JSON.stringify({ t: 'state', s: rc.room.snapshot() }));
+      markDirty();
       entry = null;
     };
     ws.on('close', cleanup);
@@ -134,7 +179,7 @@ export function startServer(port = Number(process.env.PORT || 3000)) {
     if (flip) {
       for (const [code, e] of rooms) {
         broadcast(e, JSON.stringify({ t: 'state', s: e.room.snapshot() }));
-        if (e.clients.size === 0) rooms.delete(code);
+        if (e.clients.size === 0 && !keepEmpty) rooms.delete(code);
       }
     }
   }, 1000 / 60);
@@ -147,7 +192,11 @@ export function startServer(port = Number(process.env.PORT || 3000)) {
         wss,
         rooms,
         port: server.address().port,
-        stop: () => new Promise((r) => { clearInterval(timer); wss.close(); server.close(r); }),
+        stop: async () => {
+          clearInterval(timer);
+          await flushRooms();
+          return new Promise((r) => { wss.close(); server.close(r); });
+        },
       });
     });
   });
@@ -156,5 +205,8 @@ export function startServer(port = Number(process.env.PORT || 3000)) {
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   startServer().then((s) => {
     console.log(`mini golf: http://localhost:${s.port}`);
+    for (const sig of ['SIGINT', 'SIGTERM']) {
+      process.on(sig, () => { s.stop().then(() => process.exit(0)); });
+    }
   });
 }
